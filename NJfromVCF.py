@@ -10,25 +10,27 @@ from Bio.SeqRecord import SeqRecord
 import sys, argparse, os, gzip
 from ete3 import Tree
 from Bio.Alphabet import IUPAC
-
+from re import split
 
 # 0.1) get options from commands lines
-parser = argparse.ArgumentParser(description='Perform different manipulations on a fasta file. If no optional argument is provided, just format alignment to uppercase.')
+parser = argparse.ArgumentParser(description='Compute NJ from vcf file.')
 
-
-parser.add_argument('outgroup', help='Compulsory outgroup.', nargs=1)
-parser.add_argument('input_vcf', help='vcf to process.', nargs=1)
+parser.add_argument('input_vcf', help='vcf to process. BEWARE: the vcf must be sorted per coordinates!', nargs=1)
 parser.add_argument('output_nwk', help='output files of newick trees.', nargs=1)
 
-parser.add_argument('-k', '--keepali', help='Overwrite alignment files.', action='store_true')
+parser.add_argument('-b', '--bed', help='Facultative bed file specifying window coordinates. BEWARE: the bedfile must be sorted per coordinates!', default=None, nargs=1)
+parser.add_argument('-d', '--min-dp', help='Minimum depth of sequencing for robust genotypes [6]', default=[6], nargs=1, type=int)
+parser.add_argument('-i', '--individuals', help='Individuals to process, separated by commas.', nargs=1, default=None)
+parser.add_argument('-k', '--keepali', help='Keep all alignement files alignment files. If false, a singme temp file is used to write fasta files [False].', action='store_true')
 parser.add_argument('-l', '--minlen', help='Minimum number of SNPs in order to keep windows on chromosomes edges [40].', nargs=1, type=int, default=[40])
-parser.add_argument('-L', '--winlen', help='Length of the windows in SNPs [50].', nargs=1, type=int, default=[50])
-parser.add_argument('-m', '--maxlenbp', help='Maximum window length in bp [5000].', nargs=1, type=int, default=[5000])
-parser.add_argument('-M', '--mmiss', help='Maximum number of missing data per window for a given individual. In this case, the window is dropped (no tree computed here at all) [10].', nargs=1, type=int, default=[10])
+parser.add_argument('-L', '--winlen', help='Length of sliding windows in SNPs [50].', nargs=1, type=int, default=[50])
+parser.add_argument('-M', '--mmiss', help='Maximum number of missing data per individual per window. M is a SNP number for sliding window and a percentage for predefined windows. If missing data > M, the window is dropped [10].', nargs=1, type=int, default=[10])
 parser.add_argument('-o', '--out_coord', help='Output file containing coordinates of retained windows [by default "output_nwk" with ".coord.csv" as extension].', nargs=1, type=str, default=[".coord.csv"])
+parser.add_argument('-O', '--outgroup', help='Facultative outgroup for tree rooting.', nargs=1, default=None)
 parser.add_argument('-p', '--prefali', help='Prefix for alignment file(s) ["."].', nargs=1, type=str, default=["."])
+parser.add_argument('-s', '--split-pattern', help='Regular expression specifying a pattern used to split chromosomes name in order to obtain chromosome numbers (expected to be the last element of the chromosome name) ["_|chr|Chr"].', nargs=1, type=str, default=["_|chr|Chr"])
 parser.add_argument('-T', '--ntrees', help='Number of trees to compute [all]', nargs=1, type=int, default=[-1])
-parser.add_argument('-u', '--uncompress', help='Overwrite alignment files [true].', action='store_false')
+parser.add_argument('-w', '--wsize', help='Maximum window length in bp [5000].', nargs=1, type=int, default=[5000])
 parser.add_argument('-v', '--verbose', help='verbose mode [false].', action='store_true')
 
 	# options to add
@@ -39,54 +41,73 @@ parser.add_argument('-v', '--verbose', help='verbose mode [false].', action='sto
 args = parser.parse_args()
 #~print args
 
-outg = args.outgroup[0]
-vcf = args.input_vcf[0]
-nwk = args.output_nwk[0]
-nmax = args.ntrees[0]
+def open_fil(fil):
+	if fil[-2:]=="gz":
+		f = gzip.open(fil)
+	else:
+		f= open(fil)
+	return(f)
+
+con = open_fil(args.bed[0]) if args.bed else None
+outg = args.outgroup[0] if args.outgroup else None
+outc = args.out_coord[0] ; nwk = args.output_nwk[0]
+outc = ".".join(nwk.split(".")[:-1]) + outc if outc == ".coord.csv" else outc
+indivs = args.individuals[0].split(",") if args.individuals else None
 mmiss = args.mmiss[0]
-lg = args.winlen[0]
-lmax = args.maxlenbp[0]
+spatt = args.split_pattern[0]
+vcf = args.input_vcf[0]
+
+mdp = args.min_dp[0]
+nmax = args.ntrees[0]
+lg = args.winlen[0] if not con else -1
+wsize = args.wsize[0]
 minsnp = args.minlen[0]
 prefali = args.prefali[0]
 kali = args.keepali
 vb = args.verbose
-outc = args.out_coord[0]
-if outc == ".coord.csv":
-	outc = ".".join(nwk.split(".")[:-1]) + outc
-#~print outc, nwk ; sys.exit()
+
 # add gz extension if not present
 if nwk[-2:] != "gz":
 	nwk = nwk + ".gz"
 
 #### FUNCTIONS
-def print_info(verb, scaf, sta, sto, lgi, scaf2, nbad, bad):
-	print "[ %s ] WINDOW %s:%s-%s" % (verb, scaf, sta, sto)
-	print "number of SNPs: " + str(lgi)
-	print scaf, scaf2
+def print_info(verb, wscaf, wsta, wsto, lgi, sscaf, nbad, bad, pspos, suppl=None):
+	print "---"
+	print "[ %s ]\nWINDOW: %s:%s-%s" % (verb, wscaf, wsta, wsto)
+	print "Number of SNPs: " + str(lgi)
+	if suppl: print suppl
+	print "SNP position: %s" % pspos
+	print "Window and SNP scaffold: %s %s" % (wscaf, sscaf)
 	print nbad
 	print bad
 
-def initialize(keys, ele):
-	#~print "---"
+def initialize_win(keys, l, con=con, wsize=wsize):
+	ele = l.split("\t")
 	lgi = 1 ; seq = dict.fromkeys(keys)
 	nbad = [0] * len(keys) ; bad = [False] * len(keys)
-	scaf, sta = ele[0:2]
-	return lgi, seq, nbad, bad, scaf, sta
+	if not con:
+		wscaf, wsta = ele[0:2]
+		wsto = str(int(wsta)+wsize)
+	else:
+		v = con.readline().strip().split("\t")
+		wscaf, wsta, wsto = v[0:3]
+		wsize = int(wsto) - int(wsta) + 1
+	return lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize
 
-def get_tree(n, keys, scaf, sta, sto, seq, outg, fnw, fout, lgi, vb):
+def get_tree(n, keys, wscaf, wsta, wsto, seq, outg, fnw, fout, lgi, vb):
 	# increment tree number
 	n += 1
 	# prepare ali
-	desc = "%s:%s-%s" % (scaf, sta, sto)
+	desc = "%s:%s-%s" % (wscaf, wsta, wsto)
 	if kali:
-		fnom = "%s/ali.%s.%s.%s-%s.fasta" % (prefali, n, scaf, sta, sto)
+		fnom = "%s/ali.%s.%s.%s-%s.fasta" % (prefali, n, wscaf, wsta, wsto)
 	else:
 		fnom = "%s/ali.%s.temp.fasta" % (prefali, n)
 	with open(fnom, "w") as o:
 		for k in keys:
 			record = SeqRecord(Seq(seq[k], IUPAC.ambiguous_dna),
 				id=k, description=desc)
-			if vb: print record.seq
+			if vb: print record.format("fasta").strip()
 			o.write(record.upper().format("fasta"))
 	
 	# compute and retrieve tree using seaview...
@@ -98,116 +119,237 @@ def get_tree(n, keys, scaf, sta, sto, seq, outg, fnw, fout, lgi, vb):
 		cmd = "rm %s" % fnom
 		os.system(cmd)
 		return n
-	tr = tr.split("] ")[1]
+	tr = Tree(tr.split("] ")[1])
 	# root tree
-	tr = Tree(tr)
-	tr.set_outgroup(outg)
+	if outg:
+		tr.set_outgroup(outg)
 	# write tree in a gz file
 	tr = tr.write(format=1)
 	fnw.write(tr + "\n")
-	fout.write("\t".join([ str(x) for x in [scaf, sta, sto, (int(sta)+int(sto))/2,
-		int(sto)-int(sta), lgi ] ]) + "\n")
+	fout.write("\t".join([ str(x) for x in [wscaf, wsta, wsto, (int(wsta)+int(wsto))/2,
+		int(wsto)-int(wsta), lgi ] ]) + "\n")
 	return n
 
-#### SCRIPT
-mess = "NORMAL EXIT: The program has computed %s trees\n" % nmax
-with open(vcf) as f:
-	with gzip.open(nwk, 'wb') as fnw:
-		with gzip.open(outc, 'wb') as fout:
-			fout.write("scaffold\tstart\tend\tmid\tlength\tsites\n")
-			lgi, n = [1, 0]
-			for l in f:
-				l = l.strip()
-				# if SNP line
-				if l[0] != "#":
-					ele = l.split("\t")
-					if lgi == 1:
-						print "---"
-						scaf, sta = ele[0:2]
-						sto = sta # just to avoid problem if only one snp on scaf
-					else:
-						scaf2 = ele[0]
-						# check snp on same chromosome
-						if scaf != scaf2:
-							if lgi > minsnp:
-								print_info("ALI SCAF EDGE", scaf, sta, sto, lgi, scaf2, nbad, bad)
-								n = get_tree(n, keys, scaf, sta, sto, seq, outg, fnw, fout, lgi, vb)
-								if n == nmax:
-									sys.stderr.write(mess)
-									break
-								lgi, seq, nbad, bad, scaf, sta = initialize(keys, ele)
-								lgi += 1
-							else:
-								print_info("PASS: DIFF SCAF", scaf, sta, sto, lgi, scaf2, nbad, bad)
-								lgi, seq, nbad, bad, scaf, sta = initialize(keys, ele)
-							continue
-						
-						sto = ele[1]	# should be updated only after scafs have been checked
-						# check window not bigger than s in bp
-						lw = int(sto)-int(sta)
-						if lw > lmax:
-							if lgi > minsnp:
-								print_info("ALI LONG WINDOW", scaf, sta, sto, lgi, scaf2, nbad, bad)
-								n = get_tree(n, keys, scaf, sta, sto, seq, outg, fnw, fout, lgi, vb)
-								if n == nmax:
-									sys.stderr.write(mess)
-									break
-								lgi, seq, nbad, bad, scaf, sta = initialize(keys, ele)
-							else:
-								print_info("PASS: LONG WINDOW", scaf, sta, sto, lgi, scaf2, nbad, bad)
-								lgi, seq, nbad, bad, scaf, sta = initialize(keys, ele)
-							continue
+def test_leave(n, nmax):
+	test = n == nmax
+	if test:
+		mess = "NORMAL EXIT: The program has computed %s trees\n" % nmax
+		sys.stderr.write(mess)
+	return test
 
-					# record allele info
-					al = ele[3:5]
-					for i,e in enumerate(ele[9:]):
-						try:
-							seq[keys[i]] += al[int(e)]
-						except ValueError:
-							try:
-								seq[keys[i]] += "-"
-								nbad[i] += 1
-							except TypeError:
-								seq[keys[i]] = "-"
-								nbad[i] += 1
-						except TypeError:
-								seq[keys[i]] = al[int(e)]
-					
-					# check if no more than mmiss SNPs are missing
-					for j,nb in enumerate(nbad):
-						if nb > mmiss:
-							bad[j] = True
-					if True in bad:
-						print_info("PASS: MISSING DATA", scaf, sta, sto, lgi, scaf2, nbad, bad)
-						lgi, seq, nbad, bad, scaf, sta  = initialize(keys, ele)
-						
-						continue
+def check_lgi_lg(wscaf, wsta, wsto, lgi, sscaf, nbad, bad, pspos, n, keys, 
+	seq, outg, fnw, fout, vb):
+	# output results and write log
+	print_info("PASSED: MAX SNP WINDOW", wscaf, wsta, wsto, lgi, sscaf, nbad,
+		bad, pspos)
+	n = get_tree(n, keys, wscaf, wsta, wsto, seq, outg, fnw, fout, lgi, vb)
+	return n
 
-					# if enough snps analysed, then write the temp fasta file
-					if lgi == lg:
-						print_info("EXPECTED ALI", scaf, sta, sto, lgi, scaf2, nbad, bad)
-						n = get_tree(n, keys, scaf, sta, sto, seq, outg, fnw, fout, lgi, vb)
-						if n == nmax:
-							sys.stderr.write(mess)
-							break
-						lgi, seq, nbad, bad, scaf, sta  = initialize(keys, ele)
-						
-						# check if we reached the specified number of trees
-					else:
-						# increment number of analysed lines and proceed acccordingly.
-						lgi += 1
+def check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto, sscaf, nbad, bad,
+	n, keys, seq, outg, fnw, fout, vb, mess1, mess2, pspos, con=con, mmiss=mmiss):
+	
+	if con:
+		Msnp = round(((100.-mmiss)/100.) * lgi)
+		Msnp = minsnp if Msnp < minsnp else Msnp
+		vlgi = [ lgi - x for x in nbad ]
+		vtest = [ x >= Msnp for x in vlgi ]
+	else:
+		Msnp = minsnp
+		vtest = lgi >= Msnp
+	
+	sp = "Min SNP Nber: %s" % Msnp
+	if not False in vtest:
+		print_info(mess1, wscaf, wsta, wsto, lgi, sscaf, nbad, bad, pspos, suppl=sp)
+		n = get_tree(n, keys, wscaf, wsta, wsto, seq, outg, fnw, fout, lgi, vb)
+	else:
+		print_info(mess2, wscaf, wsta, wsto, lgi, sscaf, nbad, bad, pspos, suppl=sp)
+	return n
+
+def rec_allele(alleles, vgts, seq, keys, nbad):
+	for i,e in enumerate(vgts):
+		call = e.strip().split(":")
+		try:
+			dp = int(call[2])
+		except IndexError:	# there is no dp field
+			dp = None
+		except ValueError:	# dp is "."
+			dp = None
+		if dp and dp >= mdp:
+			gt = call[0]
+		else:
+			gt = "bad"
+		try:
+			seq[keys[i]] += alleles[int(gt)]
+		except ValueError:
+			try:
+				seq[keys[i]] += "N"
+				nbad[i] += 1
+			except TypeError:
+				seq[keys[i]] = "N"
+				nbad[i] += 1
+		except TypeError:
+				seq[keys[i]] = alleles[int(gt)]
+	return seq, nbad
+
+def update_SNP(f, spos):
+	l = f.readline()
+	pspos = spos
+	return l, pspos
+
+def proc_header(l, indivs, f):
+	ele = l.strip().split("\t")
+	keys = ele[9:] if not indivs else indivs
+	inds = [ ele.index(x) for x in keys ]
+	# then load data from first SNP
+	l = f.readline()
+	pspos = 0
+	return keys, inds, l, pspos
+
+def main(l, indiv):
+	n = 0
+	while 1:
+		l = l.strip()
+		# 1) PASSED vcf comment header
+		if l[0:2] == "##":
+			l = f.readline()	# just go to next line
+			continue
+		# 2) if vcf column header line, get sample names
+		elif l[0:6] == "#CHROM":
+			keys, inds, l, pspos = proc_header(l, indivs, f)
+			continue
+		# 3) if SNP line
+		elif l[0] != "#":
+			ele = l.strip().split("\t")
+			sscaf, spos = ele[:2]
+			# 3.1) if first SNP, initialize_win variables
+			try:
+				lgi
+			except NameError:
+				lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
+			
+			# 3.2) if we have the good number of SNPs in the window
+			if not con and lgi == lg:
+				n = check_lgi_lg(wscaf, wsta, wsto, lgi, sscaf, nbad, bad, 
+					pspos, n, keys, seq, outg, fnw, fout, vb)
+				# re-initialize variables
+				lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
+				# exit program if enough tree
+				if test_leave(n, nmax): break
+				# no need to restart the loop as a new window has been
+					# initialized from the new SNP
+			
+			# 3.3) if SNP and window on different chromosomes: 
+				# (to be checked BEFORE position checking)
+			elif sscaf != wscaf:
+				# 3.3.1) for sliding windows
+					# no need to restart the loop as a new window has been
+					# initialized from the new SNP
+				if not con:
+					# output results if enough SNPs and write log
+					n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto, 
+						sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
+						"PASSED: SCAFFOLD EDGE WINDOW, ENOUGH SNPs",
+						"DISCARDED: SCAFFOLD EDGE WINDOW, NOT ENOUGH SNPs", pspos)
+					lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
+					if test_leave(n, nmax): break
 				
-				# pass header
-				elif l[0:2] == "##":
-					continue
-				
-				# if column header line, create dict: 1 entry per indiv (vcf header)...
-				elif l[0:6] == "#CHROM":
-					ele = l.split("\t")
-					keys = ele[9:]
-					seq = dict.fromkeys(keys)
-					# initialize list of bad indiv
-					nbad = [0] * len(keys) ; bad = [False] * len(keys)
-					#~print seq
+				# 3.3.2) for predefined windows
+					# - In any case we change window, restarts loop to properly
+						# process SNP as the new window can be far away.
+					# - In any case we change SNP, restarts loop as the SNP can
+						# still be on another chr or outside the window
 				else:
-					sys.exit("ERROR: problem vcf format line:\n%s" % l)
+					scnb = int(split(spatt, sscaf)[-1])
+					wcnb = int(split(spatt, wscaf)[-1])
+					# 3.3.2.1) SNP scaffold < window scaffold: update SNP
+					if scnb < wcnb:
+						l, pspos = update_SNP(f, spos)
+					# 3.3.2.2) SNP scaffold > window scaffold:
+					elif scnb > wcnb:
+						# output results if enough SNPs and write log
+						n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto, 
+							sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
+							"PASSED: ENOUGH SNPS IN PREDEFINED WINDOW",
+							"DISCARDED: NOT ENOUGH SNPS IN PREDEFINED WINDOW", pspos)
+						if test_leave(n, nmax): break
+						lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
+					else:
+						sys.exit("Scaff different but problem with ordering chr")
+					continue
+
+			# 3.4) if SNP position > window stop:
+				# (to be done AFTER scaf checking)
+			elif int(spos) > int(wsto):
+				# output results if enough SNPs and write log
+				if not con:
+					n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto,
+						sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
+						"PASSED: MAX LENGTH WINDOW, ENOUGH SNPs",
+						"DISCARDED: MAX LENGTH WINDOW, NOT ENOUGH SNPs", pspos)
+					lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
+					if test_leave(n, nmax): break
+				else:
+					n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto,
+						sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
+						"PASSED: ENOUGH SNPS IN PREDEFINED WINDOW",
+						"DISCARDED: NOT ENOUGH SNPS IN PREDEFINED WINDOW", pspos)
+					lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
+					if test_leave(n, nmax): break
+					continue	# restart loop if predefined windows
+			
+			# 3.5) check SNP position < window start	(only for predefined windows
+			elif int(spos) < int(wsta):
+				if not con:
+					sys.exit("BUG: SNP position < window start with sliding window!")
+				l, pspos = update_SNP(f, spos)
+				continue
+			
+			# 3.6) If allright, record allele info
+			vgts = [ ele[x] for x in inds ]
+			seq, nbad = rec_allele(ele[3:5], vgts, seq, keys, nbad)
+			
+			# 3.7) check if enough data for all individual in the current window
+				# i.e. no more than 'miss' missing SNPs
+			if not con:
+				for j,nb in enumerate(nbad):
+					if nb > mmiss: bad[j] = True
+				if True in bad:
+					print_info("DISCARDED: TOO MUCH MISSING DATA PER INDIVIDUAL", wscaf, wsta, wsto, lgi,
+						sscaf, nbad, bad, pspos)
+					# thus change SNP and window!
+					l, pspos = update_SNP(f, spos)
+					lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
+					continue
+			
+			# 3.8) increment number of analysed lines and proceed acccordingly.
+			l, pspos = update_SNP(f, spos)
+			if not l: break
+			lgi += 1
+		else:
+			sys.exit("ERROR: problem vcf format line:\n%s" % l)
+	return (lgi, minsnp, wscaf, wsta, wsto, lgi, sscaf, nbad, bad, n, keys,
+		seq, outg, fnw, fout, vb, pspos, ele)
+
+#### SCRIPT
+f = open_fil(vcf)
+with gzip.open(nwk, 'wb') as fnw:
+	with gzip.open(outc, 'wb') as fout:
+		fout.write("scaffold\tstart\tend\tmid\tlength\tsites\n")
+		l = f.readline()	# read very first line
+		# process vcf
+		lgi, minsnp, wscaf, wsta, wsto, lgi, sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb, pspos, ele = main(l, indivs)
+
+# 4) check last windows if enough snps analysed, then write the temp fasta file
+if not con:
+	n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto, 
+		sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
+		"LAST WINDOW PASSED: ENOUGH SNPS IN SLIDING WINDOW",
+		"LAST WINDOW DISCARDED: NOT ENOUGH SNPS IN SLIDING WINDOW", pspos)
+else:
+	n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto, 
+		sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
+		"LAST WINDOW PASSED: ENOUGH SNPS IN PREDEFINED WINDOW",
+		"LAST WINDOW DISCARDED: NOT ENOUGH SNPS IN PREDEFINED WINDOW", pspos)
+
+f.close()
+con.close()
