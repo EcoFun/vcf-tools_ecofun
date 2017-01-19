@@ -25,7 +25,7 @@ parser.add_argument('-k', '--keepali', help='Keep all alignement files alignment
 parser.add_argument('-l', '--minlen', help='Minimum number of SNPs in order to keep windows on chromosomes edges [40].', nargs=1, type=int, default=[40])
 parser.add_argument('-L', '--winlen', help='Length of sliding windows in SNPs [50].', nargs=1, type=int, default=[50])
 parser.add_argument('-M', '--mmiss', help='Maximum number of missing data per individual per window. M is a SNP number for sliding window and a percentage for predefined windows. If missing data > M, the window is dropped [10].', nargs=1, type=int, default=[10])
-parser.add_argument('-o', '--out_coord', help='Output file containing coordinates of retained windows [by default "output_nwk" with ".coord.csv" as extension].', nargs=1, type=str, default=[".coord.csv"])
+parser.add_argument('-o', '--out_coord', help='Output file containing coordinates of retained windows [by default "output_nwk" with the ".coord.csv.gz" extension].', nargs=1, type=str, default=[".coord.csv.gz"])
 parser.add_argument('-O', '--outgroup', help='Facultative outgroup for tree rooting.', nargs=1, default=None)
 parser.add_argument('-p', '--prefali', help='Prefix for alignment file(s) ["."].', nargs=1, type=str, default=["."])
 parser.add_argument('-s', '--split-pattern', help='Regular expression specifying a pattern used to split chromosomes name in order to obtain chromosome numbers (expected to be the last element of the chromosome name) ["_|chr|Chr"].', nargs=1, type=str, default=["_|chr|Chr"])
@@ -48,10 +48,10 @@ def open_fil(fil):
 		f= open(fil)
 	return(f)
 
-con = open_fil(args.bed[0]) if args.bed else None
+bed = open_fil(args.bed[0]) if args.bed else None
 outg = args.outgroup[0] if args.outgroup else None
 outc = args.out_coord[0] ; nwk = args.output_nwk[0]
-outc = ".".join(nwk.split(".")[:-1]) + outc if outc == ".coord.csv" else outc
+outc = ".".join(nwk.split(".")[:-1]) + outc if outc == ".coord.csv.gz" else outc
 indivs = args.individuals[0].split(",") if args.individuals else None
 mmiss = args.mmiss[0]
 spatt = args.split_pattern[0]
@@ -59,7 +59,7 @@ vcf = args.input_vcf[0]
 
 mdp = args.min_dp[0]
 nmax = args.ntrees[0]
-lg = args.winlen[0] if not con else -1
+lg = args.winlen[0] if not bed else -1
 wsize = args.wsize[0]
 minsnp = args.minlen[0]
 prefali = args.prefali[0]
@@ -81,15 +81,17 @@ def print_info(verb, wscaf, wsta, wsto, lgi, sscaf, nbad, bad, pspos, suppl=None
 	print nbad
 	print bad
 
-def initialize_win(keys, l, con=con, wsize=wsize):
+def initialize_win(keys, l, bed=bed, wsize=wsize):
 	ele = l.split("\t")
 	lgi = 1 ; seq = dict.fromkeys(keys)
 	nbad = [0] * len(keys) ; bad = [False] * len(keys)
-	if not con:
+	if not bed:
 		wscaf, wsta = ele[0:2]
 		wsto = str(int(wsta)+wsize)
 	else:
-		v = con.readline().strip().split("\t")
+		lbed = bed.readline()
+		while lbed[0] == "#": lbed = bed.readline()
+		v = lbed.strip().split("\t")
 		wscaf, wsta, wsto = v[0:3]
 		wsize = int(wsto) - int(wsta) + 1
 	return lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize
@@ -146,16 +148,16 @@ def check_lgi_lg(wscaf, wsta, wsto, lgi, sscaf, nbad, bad, pspos, n, keys,
 	return n
 
 def check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto, sscaf, nbad, bad,
-	n, keys, seq, outg, fnw, fout, vb, mess1, mess2, pspos, con=con, mmiss=mmiss):
+	n, keys, seq, outg, fnw, fout, vb, mess1, mess2, pspos, bed=bed, mmiss=mmiss):
 	
-	if con:
+	if bed:
 		Msnp = round(((100.-mmiss)/100.) * lgi)
 		Msnp = minsnp if Msnp < minsnp else Msnp
 		vlgi = [ lgi - x for x in nbad ]
 		vtest = [ x >= Msnp for x in vlgi ]
 	else:
 		Msnp = minsnp
-		vtest = lgi >= Msnp
+		vtest = [ lgi >= Msnp ]
 	
 	sp = "Min SNP Nber: %s" % Msnp
 	if not False in vtest:
@@ -228,7 +230,7 @@ def main(l, indiv):
 				lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
 			
 			# 3.2) if we have the good number of SNPs in the window
-			if not con and lgi == lg:
+			if not bed and lgi == lg:
 				n = check_lgi_lg(wscaf, wsta, wsto, lgi, sscaf, nbad, bad, 
 					pspos, n, keys, seq, outg, fnw, fout, vb)
 				# re-initialize variables
@@ -244,7 +246,7 @@ def main(l, indiv):
 				# 3.3.1) for sliding windows
 					# no need to restart the loop as a new window has been
 					# initialized from the new SNP
-				if not con:
+				if not bed:
 					# output results if enough SNPs and write log
 					n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto, 
 						sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
@@ -281,7 +283,7 @@ def main(l, indiv):
 				# (to be done AFTER scaf checking)
 			elif int(spos) > int(wsto):
 				# output results if enough SNPs and write log
-				if not con:
+				if not bed:
 					n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto,
 						sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
 						"PASSED: MAX LENGTH WINDOW, ENOUGH SNPs",
@@ -299,7 +301,7 @@ def main(l, indiv):
 			
 			# 3.5) check SNP position < window start	(only for predefined windows
 			elif int(spos) < int(wsta):
-				if not con:
+				if not bed:
 					sys.exit("BUG: SNP position < window start with sliding window!")
 				l, pspos = update_SNP(f, spos)
 				continue
@@ -310,7 +312,7 @@ def main(l, indiv):
 			
 			# 3.7) check if enough data for all individual in the current window
 				# i.e. no more than 'miss' missing SNPs
-			if not con:
+			if not bed:
 				for j,nb in enumerate(nbad):
 					if nb > mmiss: bad[j] = True
 				if True in bad:
@@ -335,21 +337,21 @@ f = open_fil(vcf)
 with gzip.open(nwk, 'wb') as fnw:
 	with gzip.open(outc, 'wb') as fout:
 		fout.write("scaffold\tstart\tend\tmid\tlength\tsites\n")
-		l = f.readline()	# read very first line
-		# process vcf
+		l = f.readline()	# read vcf very first line
+		# I) process vcf
 		lgi, minsnp, wscaf, wsta, wsto, lgi, sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb, pspos, ele = main(l, indivs)
 
-# 4) check last windows if enough snps analysed, then write the temp fasta file
-if not con:
-	n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto, 
-		sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
-		"LAST WINDOW PASSED: ENOUGH SNPS IN SLIDING WINDOW",
-		"LAST WINDOW DISCARDED: NOT ENOUGH SNPS IN SLIDING WINDOW", pspos)
-else:
-	n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto, 
-		sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
-		"LAST WINDOW PASSED: ENOUGH SNPS IN PREDEFINED WINDOW",
-		"LAST WINDOW DISCARDED: NOT ENOUGH SNPS IN PREDEFINED WINDOW", pspos)
+		# II) check last windows if enough snps analysed, then write the temp fasta file
+		if not bed:
+			n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto, 
+				sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
+				"LAST WINDOW PASSED: ENOUGH SNPS IN SLIDING WINDOW",
+				"LAST WINDOW DISCARDED: NOT ENOUGH SNPS IN SLIDING WINDOW", pspos)
+		else:
+			n = check_lgi_minsnp(lgi, minsnp, wscaf, wsta, wsto, 
+				sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
+				"LAST WINDOW PASSED: ENOUGH SNPS IN PREDEFINED WINDOW",
+				"LAST WINDOW DISCARDED: NOT ENOUGH SNPS IN PREDEFINED WINDOW", pspos)
 
 f.close()
-con.close()
+if bed: bed.close()
