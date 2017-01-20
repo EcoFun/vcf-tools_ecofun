@@ -86,7 +86,10 @@ def initialize_win(keys, l, bed=bed, wsize=wsize):
 	lgi = 1 ; seq = dict.fromkeys(keys)
 	nbad = [0] * len(keys) ; bad = [False] * len(keys)
 	if not bed:
-		wscaf, wsta = ele[0:2]
+		try:
+			wscaf, wsta = ele[0:2]
+		except ValueError:
+			return None, None, None, None, None, None, None, None
 		wsto = str(int(wsta)+wsize)
 	else:
 		lbed = bed.readline()
@@ -233,7 +236,7 @@ def main(l, indiv):
 			if not bed and lgi == lg:
 				n = check_lgi_lg(wscaf, wsta, wsto, lgi, sscaf, nbad, bad, 
 					pspos, n, keys, seq, outg, fnw, fout, vb)
-				# re-initialize variables
+				# re-initialize variables **from current SNP**
 				lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
 				# exit program if enough tree
 				if test_leave(n, nmax): break
@@ -252,6 +255,7 @@ def main(l, indiv):
 						sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
 						"PASSED: SCAFFOLD EDGE WINDOW, ENOUGH SNPs",
 						"DISCARDED: SCAFFOLD EDGE WINDOW, NOT ENOUGH SNPs", pspos)
+					# re-initialize variables **from current SNP**
 					lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
 					if test_leave(n, nmax): break
 				
@@ -266,6 +270,7 @@ def main(l, indiv):
 					# 3.3.2.1) SNP scaffold < window scaffold: update SNP
 					if scnb < wcnb:
 						l, pspos = update_SNP(f, spos)
+						if not l: break
 					# 3.3.2.2) SNP scaffold > window scaffold:
 					elif scnb > wcnb:
 						# output results if enough SNPs and write log
@@ -288,6 +293,7 @@ def main(l, indiv):
 						sscaf, nbad, bad, n, keys, seq, outg, fnw, fout, vb,
 						"PASSED: MAX LENGTH WINDOW, ENOUGH SNPs",
 						"DISCARDED: MAX LENGTH WINDOW, NOT ENOUGH SNPs", pspos)
+					# re-initialize variables **from current SNP**
 					lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
 					if test_leave(n, nmax): break
 				else:
@@ -299,11 +305,12 @@ def main(l, indiv):
 					if test_leave(n, nmax): break
 					continue	# restart loop if predefined windows
 			
-			# 3.5) check SNP position < window start	(only for predefined windows
+			# 3.5) check SNP position < window start	(only for predefined windows)
 			elif int(spos) < int(wsta):
 				if not bed:
 					sys.exit("BUG: SNP position < window start with sliding window!")
 				l, pspos = update_SNP(f, spos)
+				if not l: break
 				continue
 			
 			# 3.6) If allright, record allele info
@@ -320,6 +327,7 @@ def main(l, indiv):
 						sscaf, nbad, bad, pspos)
 					# thus change SNP and window!
 					l, pspos = update_SNP(f, spos)
+					if not l: break
 					lgi, seq, nbad, bad, wscaf, wsta, wsto, wsize = initialize_win(keys, l)
 					continue
 			
