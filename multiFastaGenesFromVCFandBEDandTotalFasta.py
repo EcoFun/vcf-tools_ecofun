@@ -24,6 +24,8 @@ def getAnnotation_gff(annotationLine):
     if "CDS" not in annotationLine:
         return False
     annotationInterTable = annotationLine.strip().split("\t")
+    if len(annotationInterTable) < 5:
+        return False
     annotationInterSca = annotationInterTable[0]
     annotationInterStart = int(annotationInterTable[3])
     annotationInterStop = int(annotationInterTable[4])
@@ -42,7 +44,7 @@ def writeAbsentVCF(sampleNames, length=1):
 def addDic(dic1, dic2):
     tmpDic = dict()
     if (sorted(dic1.keys()) != sorted(dic2.keys())):
-        raise Exception
+        raise Exception("Dcitionnaries ar not of the same size")
     else:
         for k, v in dic1.items():
             tmpDic[k] = v + dic2[k]
@@ -67,10 +69,19 @@ def generatePosition(mutation):
     tmpDic = dict()
     for s in mutation.samples:
         try:
-            allele = mutation[s.e.gt_alleles[0]]
+            if len(s.gt_bases) > 1:
+                print(s.gt_bases)
+            allele = s.gt_bases
         except:
             allele = "N"
         tmpDic[s.sample] = allele  # TODO CHECK QUALITY
+    return tmpDic
+
+
+def initGeneSequence(samples):
+    tmpDic = dict()
+    for sample in samples:
+        tmpDic[sample] = ""
     return tmpDic
 
 
@@ -80,7 +91,7 @@ def main(vcf_reader, annotationHandle):
     # Annotation
     presentGeneName = ""
     presentgeneSens = ""
-    presentGeneSequence = dict()
+    presentGeneSequence = initGeneSequence(sampleNames)
     # Mutation
     mutationPosition = vcf_reader.next()
     # for position in vcf_reader
@@ -108,11 +119,13 @@ def main(vcf_reader, annotationHandle):
                     presentGeneSequence = reverse_complement(presentGeneSequence)
                 print(presentGeneName + " is generated")
                 # TODO Permit to change the output folder
-                print("\n".join([">" + k + "\n" + v + "\n" for k, v in presentGeneSequence.items()]), file=presentGeneName + ".multi.fasta")
+                print("\n".join([">" + k + "\n" + v + "\n" for k, v in presentGeneSequence.items()]), file=open(presentGeneName + ".multi.fasta", "w"))
                 # We put the new informations in place
                 presentGeneName = annotationGene
                 presentgeneSens = annotationSens
-                presentGeneSequence = dict()
+                presentGeneSequence = initGeneSequence(sampleNames)
+            else:
+                presentGeneName = annotationGene
 
         # If the annotationInterSca is after the scaffold of the vcf go to the next position of the vcf
         if (annotationIntervalSca > mutationScaffold):
@@ -145,7 +158,7 @@ def main(vcf_reader, annotationHandle):
             presentGeneSequence = addDic(presentGeneSequence, writeAbsentVCF(sampleNames, mutationPositionNumber - annotationIntervalStart))
         while (mutationScaffold == annotationIntervalSca and mutationPositionNumber <= annotationIntervalStop):
             d = generatePosition(mutationPosition)
-            addDic(presentGeneSequence, d)
+            presentGeneSequence = addDic(presentGeneSequence, d)
             mutationPosition = increaseVCF(vcf_reader, annotationIntervalSca, annotationIntervalStart)
             mutationScaffold = mutationPosition.CHROM
             mutationPositionNumber = mutationPosition.POS
@@ -154,9 +167,9 @@ def main(vcf_reader, annotationHandle):
 # BEGIN: OPENING
 vcfHandle = open(args.input_vcf[0])
 vcf_reader = vcf.Reader(vcfHandle)
-annotationHandle = open(args.input_annotation3[0])
+annotationHandle = open(args.input_annotation[0])
 
-main()
+main(vcf_reader, annotationHandle)
 
 # END: CLOSING
 vcfHandle.close()
