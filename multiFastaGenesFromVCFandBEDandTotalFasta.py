@@ -43,11 +43,16 @@ def writeAbsentVCF(sampleNames, length=1):
 
 def addDic(dic1, dic2):
     tmpDic = dict()
-    if (sorted(dic1.keys()) != sorted(dic2.keys())):
+    if (len(dic1) != (len(dic2) + 1)):
         raise Exception("Dcitionnaries ar not of the same size")
     else:
         for k, v in dic1.items():
-            tmpDic[k] = v + dic2[k]
+            try:
+                tmpDic[k] = v + dic2[k]
+            except KeyError:
+                tmpDic[k] = v
+            except:
+                raise Exception
     return tmpDic
 
 
@@ -86,7 +91,7 @@ def initGeneSequence(samples):
 
 
 # PROCESS
-def main(vcf_reader, annotationHandle):
+def main(vcf_reader, annotationHandle, refDic):
     sampleNames = vcf_reader.samples
     # Annotation
     presentGeneName = ""
@@ -112,6 +117,7 @@ def main(vcf_reader, annotationHandle):
         # If annotInfo is False we go to the next information (not a CDS)
         else:
             continue
+        print(annotationIntervalSca, annotationIntervalStart, annotationIntervalStop)
         # We write the previous gene
         if (annotationGene != presentGeneName):
             if presentGeneName != "":
@@ -126,7 +132,10 @@ def main(vcf_reader, annotationHandle):
                 presentGeneSequence = initGeneSequence(sampleNames)
             else:
                 presentGeneName = annotationGene
-
+        try:
+            presentGeneSequence["Reference"] += refDic[annotationIntervalSca][annotationIntervalStart - 1:annotationIntervalStop]
+        except:
+            presentGeneSequence["Reference"] = refDic[annotationIntervalSca][annotationIntervalStart - 1:annotationIntervalStop]
         # If the annotationInterSca is after the scaffold of the vcf go to the next position of the vcf
         if (annotationIntervalSca > mutationScaffold):
             mutationPosition = increaseVCF(vcf_reader, annotationIntervalSca, annotationIntervalStart)
@@ -156,20 +165,48 @@ def main(vcf_reader, annotationHandle):
         # The vcf position is in the BED interval
         if (mutationPositionNumber > annotationIntervalStart):
             presentGeneSequence = addDic(presentGeneSequence, writeAbsentVCF(sampleNames, mutationPositionNumber - annotationIntervalStart))
+
+        positionPointer = mutationPositionNumber - 1
         while (mutationScaffold == annotationIntervalSca and mutationPositionNumber <= annotationIntervalStop):
-            d = generatePosition(mutationPosition)
-            presentGeneSequence = addDic(presentGeneSequence, d)
-            mutationPosition = increaseVCF(vcf_reader, annotationIntervalSca, annotationIntervalStart)
-            mutationScaffold = mutationPosition.CHROM
-            mutationPositionNumber = mutationPosition.POS
+            print(mutationPositionNumber)  # TODO REMOVE
+            # Check if the mutations follow one another, if it do, generate and go to the next
+            if mutationPositionNumber == (positionPointer + 1):
+                d = generatePosition(mutationPosition)
+                presentGeneSequence = addDic(presentGeneSequence, d)
+                mutationPosition = increaseVCF(vcf_reader, annotationIntervalSca, annotationIntervalStart)
+                mutationScaffold = mutationPosition.CHROM
+                mutationPositionNumber = mutationPosition.POS
+                positionPointer += 1
+            # If mutations don't follow directy the previous one add N
+            else:
+                presentGeneSequence = addDic(presentGeneSequence, writeAbsentVCF(sampleNames))
+                positionPointer += 1
+
+
+def loadReferenceFasta(fastaFileName):
+    tmpDic = dict()
+    f = open(fastaFileName)
+    chro = None
+    seq = ""
+    for l in f.readlines():
+        if l[0] == ">":
+            if chro:
+                tmpDic[chro] = seq
+                seq = ""
+            chro = l.split()[0].strip(">")
+        else:
+            seq += l.strip()
+    tmpDic[chro] = seq
+    return tmpDic
 
 
 # BEGIN: OPENING
 vcfHandle = open(args.input_vcf[0])
 vcf_reader = vcf.Reader(vcfHandle)
 annotationHandle = open(args.input_annotation[0])
+dicReference = loadReferenceFasta(args.input_fasta[0])
 
-main(vcf_reader, annotationHandle)
+main(vcf_reader, annotationHandle, dicReference)
 
 # END: CLOSING
 vcfHandle.close()
