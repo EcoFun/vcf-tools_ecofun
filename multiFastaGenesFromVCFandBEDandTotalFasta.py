@@ -64,10 +64,13 @@ def reverse_complement(dic):
 
 
 def increaseVCF(vcf_reader, annotSca, annotStart):
-    vcfInfo = vcf_reader.next()
-    while (vcfInfo.CHROM <= annotSca and vcfInfo.POS < annotStart):
+    try:
         vcfInfo = vcf_reader.next()
-    return vcfInfo
+        while (vcfInfo.CHROM <= annotSca and vcfInfo.POS < annotStart):
+            vcfInfo = vcf_reader.next()
+        return vcfInfo
+    except:
+        return False
 
 
 def generatePosition(mutation):
@@ -117,7 +120,6 @@ def main(vcf_reader, annotationHandle, refDic):
         # If annotInfo is False we go to the next information (not a CDS)
         else:
             continue
-        print(annotationIntervalSca, annotationIntervalStart, annotationIntervalStop)
         # We write the previous gene
         if (annotationGene != presentGeneName):
             if presentGeneName != "":
@@ -125,7 +127,7 @@ def main(vcf_reader, annotationHandle, refDic):
                     presentGeneSequence = reverse_complement(presentGeneSequence)
                 print(presentGeneName + " is generated")
                 # TODO Permit to change the output folder
-                print("\n".join([">" + k + "\n" + v + "\n" for k, v in presentGeneSequence.items()]), file=open(presentGeneName + ".multi.fasta", "w"))
+                print("\n".join([">" + k + "\n" + v + "\n" for k, v in sorted(presentGeneSequence.items(), key=lambda e: e[0])]), file=open(presentGeneName + ".multi.fasta", "w"))
                 # We put the new informations in place
                 presentGeneName = annotationGene
                 presentgeneSens = annotationSens
@@ -138,7 +140,10 @@ def main(vcf_reader, annotationHandle, refDic):
             presentGeneSequence["Reference"] = refDic[annotationIntervalSca][annotationIntervalStart - 1:annotationIntervalStop]
         # If the annotationInterSca is after the scaffold of the vcf go to the next position of the vcf
         if (annotationIntervalSca > mutationScaffold):
-            mutationPosition = increaseVCF(vcf_reader, annotationIntervalSca, annotationIntervalStart)
+            try:
+                mutationPosition = increaseVCF(vcf_reader, annotationIntervalSca, annotationIntervalStart)
+            except:
+                return 0
             mutationScaffold = mutationPosition.CHROM
             mutationPositionNumber = mutationPosition.POS
         # We have gone to the next interesting vcf position
@@ -146,11 +151,15 @@ def main(vcf_reader, annotationHandle, refDic):
         # If the bedInterSca is before the scaffold of the vcf go to the next position of the bed
         if (annotationIntervalSca < mutationScaffold):
             # ALL THE ANNOTATION HAVE NO CORRESPONDANT IN VCF, ENTIRE ANNOTATION WITH ONLY N FOR ALL BUT REFERENCE
-            presentGeneSequence = addDic(presentGeneSequence, writeAbsentVCF(sampleNames, annotationIntervalStop - annotationIntervalStart))
+            print("Add N scaffold")  # TODO REMOVE
+            presentGeneSequence = addDic(presentGeneSequence, writeAbsentVCF(sampleNames, annotationIntervalStop - annotationIntervalStart + 1))
             continue
 
-        if (annotationIntervalStart < mutationPositionNumber):
-            mutationPosition = increaseVCF(vcf_reader, annotationIntervalSca, annotationIntervalStart)
+        if (annotationIntervalStart > mutationPositionNumber):
+            try:
+                mutationPosition = increaseVCF(vcf_reader, annotationIntervalSca, annotationIntervalStart)
+            except:
+                return 0
             mutationScaffold = mutationPosition.CHROM
             mutationPositionNumber = mutationPosition.POS
         # We have gone to the next interesting vcf position
@@ -158,7 +167,8 @@ def main(vcf_reader, annotationHandle, refDic):
         # The annotation interval is completely before the vcf position, we go to next group of position in annotation
         if (annotationIntervalStop < mutationPositionNumber):
             # ALL THE ANNOTATION HAVE NO CORRESPONDANT IN VCF, ENTIRE ANNOTATION WITH ONLY N FOR ALL BUT REFERENCE
-            presentGeneSequence = addDic(presentGeneSequence, writeAbsentVCF(sampleNames, annotationIntervalStop - annotationIntervalStart))
+            print("Add N batch")  # TODO REMOVE
+            presentGeneSequence = addDic(presentGeneSequence, writeAbsentVCF(sampleNames, annotationIntervalStop - annotationIntervalStart + 1))
             continue
         # The annotation interval is after the vcf position, we go to next position of vcf
 
@@ -166,14 +176,16 @@ def main(vcf_reader, annotationHandle, refDic):
         if (mutationPositionNumber > annotationIntervalStart):
             presentGeneSequence = addDic(presentGeneSequence, writeAbsentVCF(sampleNames, mutationPositionNumber - annotationIntervalStart))
 
-        positionPointer = mutationPositionNumber - 1
+        positionPointer = mutationPositionNumber
         while (mutationScaffold == annotationIntervalSca and mutationPositionNumber <= annotationIntervalStop):
-            print(mutationPositionNumber)  # TODO REMOVE
             # Check if the mutations follow one another, if it do, generate and go to the next
-            if mutationPositionNumber == (positionPointer + 1):
+            if mutationPositionNumber == positionPointer:
                 d = generatePosition(mutationPosition)
                 presentGeneSequence = addDic(presentGeneSequence, d)
-                mutationPosition = increaseVCF(vcf_reader, annotationIntervalSca, annotationIntervalStart)
+                try:
+                    mutationPosition = increaseVCF(vcf_reader, annotationIntervalSca, annotationIntervalStart)
+                except:
+                    return 0
                 mutationScaffold = mutationPosition.CHROM
                 mutationPositionNumber = mutationPosition.POS
                 positionPointer += 1
