@@ -13,6 +13,7 @@ parser.add_argument('input_fasta', help='Fasta of the complete reference genome.
 # TODO: For now not possible to change
 parser.add_argument('output_fasta_folder', help='output folder. If not given write all the fasta in place (For now not possible to change)', nargs=1, default=".")
 args = parser.parse_args()
+nameReferenceGenome = "Vina-EUB04-domEU"
 
 
 def getAnnotation(annotLine):
@@ -70,7 +71,7 @@ def increaseVCF(vcf_reader, annotSca, annotStart):
             vcfInfo = vcf_reader.next()
         return vcfInfo
     except:
-        return False
+        raise Exception("VCF Finished")
 
 
 def generatePosition(mutation):
@@ -134,10 +135,11 @@ def main(vcf_reader, annotationHandle, refDic):
                 presentGeneSequence = initGeneSequence(sampleNames)
             else:
                 presentGeneName = annotationGene
+        refSeq = refDic[annotationIntervalSca][annotationIntervalStart - 1:annotationIntervalStop]
         try:
-            presentGeneSequence["Reference"] += refDic[annotationIntervalSca][annotationIntervalStart - 1:annotationIntervalStop]
+            presentGeneSequence[nameReferenceGenome] += refSeq
         except:
-            presentGeneSequence["Reference"] = refDic[annotationIntervalSca][annotationIntervalStart - 1:annotationIntervalStop]
+            presentGeneSequence[nameReferenceGenome] = refSeq
         # If the annotationInterSca is after the scaffold of the vcf go to the next position of the vcf
         if (annotationIntervalSca > mutationScaffold):
             try:
@@ -193,6 +195,8 @@ def main(vcf_reader, annotationHandle, refDic):
             else:
                 presentGeneSequence = addDic(presentGeneSequence, writeAbsentVCF(sampleNames))
                 positionPointer += 1
+        while len(presentGeneSequence[nameReferenceGenome]) > len(presentGeneSequence.values()[0]):
+            presentGeneSequence = addDic(presentGeneSequence, writeAbsentVCF(sampleNames))
 
 
 def loadReferenceFasta(fastaFileName):
