@@ -5,10 +5,10 @@ import argparse
 import vcf
 from Bio.Seq import Seq
 
-parser = argparse.ArgumentParser(description='Create one multifasta by gene in the BED file')
+parser = argparse.ArgumentParser(description='Create one multifasta by gene in the gff file')
 
-parser.add_argument('input_vcf', help='vcf to process. BEWARE: the vcf must be sorted per coordinates!', nargs=1)
-parser.add_argument('input_annotation', help='annotation to process (in gff3 for now). BEWARE: the annotation must be sorted per coordinates!', nargs=1)
+parser.add_argument('input_vcf', help='vcf to process. @@@ BEWARE: the vcf must be sorted per coordinates! @@@', nargs=1)
+parser.add_argument('input_annotation', help='annotation to process (in gff3 for now). @@@ BEWARE: the annotation must be sorted per coordinates! @@@', nargs=1)
 parser.add_argument('input_fasta', help='Fasta of the complete reference genome.', nargs=1)
 # TODO: For now not possible to change
 parser.add_argument('output_fasta_folder', help='output folder. If not given write all the fasta in place (For now not possible to change)', nargs=1, default=".")
