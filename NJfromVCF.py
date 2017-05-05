@@ -7,15 +7,15 @@ __license__ = "GPL_v3"
 #~from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-import sys, argparse, os, gzip
+import sys, argparse as ap, os, gzip
 from ete3 import Tree
 from Bio.Alphabet import IUPAC
 from re import split
 
 # 0.1) get options from commands lines
-parser = argparse.ArgumentParser(description='Compute NJ from vcf file.')
+parser = ap.ArgumentParser(description='Compute NJ from vcf file.')
 
-parser.add_argument('input_vcf', help='vcf to process. BEWARE: the vcf must be sorted per coordinates!', nargs=1)
+parser.add_argument('input_vcf', help='vcf to process. BEWARE: the vcf must be sorted by coordinates!', nargs=1)
 parser.add_argument('output_nwk', help='output files of newick trees.', nargs=1)
 
 parser.add_argument('-b', '--bed', help='Facultative bed file specifying window coordinates. If the header has a header, it should start with a "#". BEWARE: the bedfile must be sorted per coordinates!', default=None, nargs=1)
@@ -124,9 +124,9 @@ def get_tree(n, keys, wscaf, wsta, wsto, seq, outg, fnw, fout, lgi, vb, kali=kal
 	# prepare ali
 	desc = "%s:%s-%s" % (wscaf, wsta, wsto)
 	if kali:
-		fnom = "%s/ali.%s.%s.%s-%s.fasta" % (prefali, n, wscaf, wsta, wsto)
+		fnom = "%s/%s.%s-%s.fasta" % (prefali, wscaf, wsta, wsto)
 	else:
-		fnom = "%s/ali.%s.temp.fasta" % (prefali, n)
+		fnom = "%s/ali.temp.fasta" % (prefali)
 	
 	with open(fnom, "w") as o:
 		for k in keys:
