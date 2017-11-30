@@ -3,8 +3,6 @@
 from __future__ import print_function
 import egglib
 import os
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 from tpayenFunctions import addDic, encapsulate, loadReferenceFasta
 import copy
 import numpy
@@ -18,13 +16,11 @@ Create statistics for multi-fastas
 parser.add_argument('--fastas', metavar='<fastas>', nargs='*', help='The multi-fasta list of genes  that will be processed')
 parser.add_argument('--namesFile', metavar='<namesFile>', type=str, help='The associative file between individuals and populations')
 parser.add_argument('--outFolder', metavar='<outFolder>', type=str, help='The folder where (pdf) results will be written')
-parser.add_argument('--subFile', metavar='<subFile>', type=str, help='A file containing a list of genes to be analyzed separatly')
 args = parser.parse_args()
 
 fastas = [os.path.abspath(e) for e in args.fastas]
 namesFile = os.path.abspath(args.namesFile)
 outFolder = os.path.abspath(args.outFolder)
-subFile = os.path.abspath(args.subFile)
 
 NB_POP_INCLUDED = 2
 
@@ -33,8 +29,6 @@ NB_POP_INCLUDED = 2
 statisticsList = ['Aing', 'Aotg', 'As', 'Asd', 'Atot', 'B', 'Ch', 'ChE', 'D', 'Da', 'Deta', 'Dfl', 'Dj', 'Dstar', 'Dxy', 'E', 'F', 'Fs', 'Fstar', 'Gst', 'Gste', 'Hns', 'Hsd', 'Hst', 'K', 'Ke', 'Pi', 'Q', 'R', 'R2', 'R2E', 'R3', 'R3E', 'R4', 'R4E', 'Rintervals', 'Rmin', 'RminL', 'S', 'So', 'Ss', 'Sso', 'WCst', 'Z*nS', 'Z*nS*', 'ZZ', 'Za', 'ZnS', 'eta', 'etao', 'lseff', 'lseffo', 'nM', 'nPairs', 'nPairsAdj', 'ns_site', 'nseff', 'nseffo', 'nsingld', 'nsmax', 'nsmaxo', 'numFxA', 'numFxA*', 'numFxD', 'numFxD*', 'numShA', 'numShA*', 'numShP', 'numShP*', 'numSp', 'numSp*', 'numSpd', 'numSpd*', 'pM', 'rD', 'singl', 'singl_o', 'sites', 'sites_o', 'thetaH', 'thetaIAM', 'thetaL', 'thetaPi', 'thetaSMM', 'thetaW']
 
 structureModification = {}  # EXAMPLE {100: [300, 600, 700, 1000, 1100, 1200], 200: [500, 800, 900]}
-subList = [e.split(".")[0] for e in open(subFile).readlines()]
-subList = list(set(subList))
 individualsToDel = ["Vina-2269-pyrac-trim", "Vina-2504-loq-trim", "Vina-2263-loq-trim", "Vina-2474-CAP-trim", "Vina-2225-CAM-trim", "Vina-2226-CAM-trim", "Vina-2458-CAM-trim", "Vina-2478-syl-trim"]
 
 
@@ -70,15 +64,13 @@ def computeMK(align, struct):
     return {"Ds": Ds, "Dn": Dn, "Ps": Ps, "Pn": Pn, "alpha": alpha}
 
 
-def computeStatsGenes(fastas, statsList, namesFile=None, modif=None, subList=None, individualsToDelete=None, deletedIndividualsStructure=None):
+def computeStatsGenes(fastas, statsList, namesFile=None, modif=None, individualsToDelete=None, deletedIndividualsStructure=None):
     dicoPNPSDNDS = dict()
     cs = egglib.stats.ComputeStats()
     for s in statsList:
         cs.add_stats(s)
     stats = dict()
     dndsList = list()
-    statsSubList = dict()
-    dndsSubList = list()
     errors = 0
     count = 0
     for fa in fastas:
@@ -89,16 +81,11 @@ def computeStatsGenes(fastas, statsList, namesFile=None, modif=None, subList=Non
         nameGene = os.path.split(fa)[1].split(".")[0]
         if namesFile:
             try:
-                print("In 1", file=sys.stderr)
                 aln = egglib.io.from_fasta(changeFastaFormat(fastaString, namesFile), string=True, groups=True, cls=egglib.Align)
-                print("In 2", file=sys.stderr)
                 struct = egglib.stats.get_structure(aln, lvl_clust=0, lvl_pop=1, lvl_indiv=2)
-                print("In 3", file=sys.stderr)
                 if modif:
                     struct = modifyStruct(struct, modif)
-                print("In 4", file=sys.stderr)
                 tmp = cs.process_align(aln, struct=struct)
-                print("In 5", file=sys.stderr)
             except ValueError, e:
                 print(fa, file=sys.stderr)
                 count += 1
@@ -123,11 +110,6 @@ def computeStatsGenes(fastas, statsList, namesFile=None, modif=None, subList=Non
             stats = addDic(stats, encapsulate(tmp))
         except:
             stats = encapsulate(tmp.copy())
-        if subList and nameGene in subList:
-            try:
-                statsSubList = addDic(statsSubList, encapsulate(tmp))
-            except:
-                statsSubList = tmp.copy()
         codstat = egglib.stats.CodingDiversity()
         try:
             codstat.process(aln)
@@ -148,56 +130,8 @@ def computeStatsGenes(fastas, statsList, namesFile=None, modif=None, subList=Non
             print(e, file=sys.stderr)
             dnds = None
         dndsList.append(dnds)
-        if subList and nameGene in subList:
-            dndsSubList.append(dnds)
-    if subList:
-        return (stats, dndsList, statsSubList, dndsSubList, dicoPNPSDNDS)
     else:
         return (stats, dndsList, dicoPNPSDNDS)
-
-
-def plotStats(statDictionaryT, otherStatsT, fileOut, color1=None, normed=False, statDictionaryTPartial=None, otherStatsTPartial=None, color2=None):
-    statDictionary = copy.deepcopy(statDictionaryT)
-    otherStats = copy.deepcopy(otherStatsT)
-    with PdfPages(fileOut) as pdf:
-        for statName, statGenes in statDictionary.items():
-            plt.figure()
-            plt.title(statName)
-            statGenes = cleanStats(statGenes, 1e10)
-            try:
-                data = [round(e, 2) for e in statGenes if e]
-                try:
-                    min(data)
-                    plt.hist(data, log=False, color=color1, normed=normed, alpha=0.5)
-                except ValueError:
-                    pass
-                if statDictionaryTPartial:
-                    statGenesPartial = cleanStats(statDictionaryTPartial[statName], 1e10)
-                    data = [round(e, 2) for e in statGenesPartial if e]
-                    try:
-                        min(data)
-                        plt.hist(data, log=False, color=color2, normed=normed, alpha=0.5)
-                    except ValueError:
-                        pass
-            except TypeError:
-                pass
-            pdf.savefig()
-            plt.close()
-        for stat in otherStats:
-            plt.hist([e for e in stat if e], bins=100, log=False, color=color1, normed=normed)
-            if otherStatsTPartial:
-                statPartial = otherStatsTPartial.pop(0)
-                plt.hist([e for e in statPartial if e], bins=100, log=False, color=color2, normed=normed)
-            plt.title('dN/dS')
-            pdf.savefig()
-            plt.close()
-
-
-def cleanStats(listOfStats, limit):
-    for stat in range(len(listOfStats)):
-        if listOfStats[stat] < -limit or listOfStats[stat] > limit:
-            listOfStats[stat] = None
-    return listOfStats
 
 
 def writeStats(statDictionaryT, otherStatsT, fastas):
@@ -348,24 +282,17 @@ def deletePopulation(dictionary, cluster, populationList):
     return dictionary
 
 
-def main(fastas, statsList, namesFile=None, subList=None, structureModification={}, toDel=[], figOutName=None, individualsToDelete=None, indivDeletedStructure=None):
+def main(fastas, statsList, namesFile=None, structureModification={}, toDel=[], figOutName=None, individualsToDelete=None, indivDeletedStructure=None):
     if figOutName:
         print(figOutName)
-    stats = computeStatsGenes(fastas, statsList, namesFile, (structureModification, toDel), subList=subList, individualsToDelete=individualsToDelete, deletedIndividualsStructure=indivDeletedStructure)
+    stats = computeStatsGenes(fastas, statsList, namesFile, (structureModification, toDel), individualsToDelete=individualsToDelete, deletedIndividualsStructure=indivDeletedStructure)
     if not stats:
         print("Stats are missing", file=sys.stderr)
         return None
-    stats2 = stats
     writeStats(stats[0], [stats[1]], fastas)
-    if figOutName:
-        outFile = os.path.join(outFolder, figOutName + ".pdf")
-        if subList:
-            plotStats(stats2[0], [stats2[1]], outFile, color1='yellow', statDictionaryTPartial=stats2[2], otherStatsTPartial=[stats2[3]], color2='red')
-        else:
-            plotStats(stats2[0], [stats2[1]], outFile, 'yellow')
     print(stats[-1], file=open(os.path.join(outFolder, figOutName + ".mk.res"), "w"))
 
-    
+
 if __name__ == "__main__":
     toDel = sorted(list(set([int(e.split()[2]) for e in open(namesFile).readlines() if len(e.split()) > 2])))
     for name, toDelList in createAllTuple(toDel, NB_POP_INCLUDED).items():
@@ -373,5 +300,4 @@ if __name__ == "__main__":
         if os.path.exists(os.path.join(outFolder, name + ".pdf")):
             continue
         else:
-            main(fastas, statisticsList, namesFile, subList=subList, structureModification=structureModification, toDel=toDelList, figOutName=name, individualsToDelete=individualsToDel, indivDeletedStructure=[e.split()[0] for e in open(namesFile).readlines()])
-
+            main(fastas, statisticsList, namesFile, structureModification=structureModification, toDel=toDelList, figOutName=name, individualsToDelete=individualsToDel, indivDeletedStructure=[e.split()[0] for e in open(namesFile).readlines()])
