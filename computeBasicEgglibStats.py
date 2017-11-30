@@ -13,7 +13,7 @@ import itertools
 import argparse
 
 parser = argparse.ArgumentParser(description="""
-Take a genome (fasta) and give the size
+Create statistics for multi-fastas
 """)
 parser.add_argument('--fastas', metavar='<fastas>', nargs='*', help='The multi-fasta list of genes  that will be processed')
 parser.add_argument('--namesFile', metavar='<namesFile>', type=str, help='The associative file between individuals and populations')
@@ -26,10 +26,11 @@ namesFile = os.path.abspath(args.namesFile)
 outFolder = os.path.abspath(args.outFolder)
 subFile = os.path.abspath(args.subFile)
 
-NB_POP_INCLUDED = 1
+NB_POP_INCLUDED = 2
 
+
+#### WARNING: WITH EGGLIB 3.0.0b12: Fst results in a segfault
 statisticsList = ['Aing', 'Aotg', 'As', 'Asd', 'Atot', 'B', 'Ch', 'ChE', 'D', 'Da', 'Deta', 'Dfl', 'Dj', 'Dstar', 'Dxy', 'E', 'F', 'Fs', 'Fstar', 'Gst', 'Gste', 'Hns', 'Hsd', 'Hst', 'K', 'Ke', 'Pi', 'Q', 'R', 'R2', 'R2E', 'R3', 'R3E', 'R4', 'R4E', 'Rintervals', 'Rmin', 'RminL', 'S', 'So', 'Ss', 'Sso', 'WCst', 'Z*nS', 'Z*nS*', 'ZZ', 'Za', 'ZnS', 'eta', 'etao', 'lseff', 'lseffo', 'nM', 'nPairs', 'nPairsAdj', 'ns_site', 'nseff', 'nseffo', 'nsingld', 'nsmax', 'nsmaxo', 'numFxA', 'numFxA*', 'numFxD', 'numFxD*', 'numShA', 'numShA*', 'numShP', 'numShP*', 'numSp', 'numSp*', 'numSpd', 'numSpd*', 'pM', 'rD', 'singl', 'singl_o', 'sites', 'sites_o', 'thetaH', 'thetaIAM', 'thetaL', 'thetaPi', 'thetaSMM', 'thetaW']
-
 
 structureModification = {}  # EXAMPLE {100: [300, 600, 700, 1000, 1100, 1200], 200: [500, 800, 900]}
 subList = [e.split(".")[0] for e in open(subFile).readlines()]
@@ -88,11 +89,16 @@ def computeStatsGenes(fastas, statsList, namesFile=None, modif=None, subList=Non
         nameGene = os.path.split(fa)[1].split(".")[0]
         if namesFile:
             try:
+                print("In 1", file=sys.stderr)
                 aln = egglib.io.from_fasta(changeFastaFormat(fastaString, namesFile), string=True, groups=True, cls=egglib.Align)
+                print("In 2", file=sys.stderr)
                 struct = egglib.stats.get_structure(aln, lvl_clust=0, lvl_pop=1, lvl_indiv=2)
+                print("In 3", file=sys.stderr)
                 if modif:
                     struct = modifyStruct(struct, modif)
+                print("In 4", file=sys.stderr)
                 tmp = cs.process_align(aln, struct=struct)
+                print("In 5", file=sys.stderr)
             except ValueError, e:
                 print(fa, file=sys.stderr)
                 count += 1
@@ -362,7 +368,6 @@ def main(fastas, statsList, namesFile=None, subList=None, structureModification=
     
 if __name__ == "__main__":
     toDel = sorted(list(set([int(e.split()[2]) for e in open(namesFile).readlines() if len(e.split()) > 2])))
-    toDel = [600]  # TODO: TEST REMOVE
     for name, toDelList in createAllTuple(toDel, NB_POP_INCLUDED).items():
         print(name, file=sys.stderr)
         if os.path.exists(os.path.join(outFolder, name + ".pdf")):
